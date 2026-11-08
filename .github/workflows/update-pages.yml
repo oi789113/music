@@ -5,6 +5,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+  pages: write
 concurrency:
   group: daily-music-pages
   cancel-in-progress: false
@@ -26,4 +27,13 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m 'Update daily music charts'
             git push
+          fi
+      - name: Request Pages rebuild after updating charts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1; then
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/pages/builds" --silent
+          else
+            echo 'Pages is not enabled yet; skipping rebuild.'
           fi

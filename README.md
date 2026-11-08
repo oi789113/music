@@ -24,4 +24,4 @@
 
 静态网站使用 `docs/` 目录。运行 `npm run build:pages` 生成网页与 `docs/api/charts.json`；联网时将从网易云热歌榜和 iTunes 美国榜获取最新数据，单个平台失败时沿用已有、保留时间的快照。网站在访客打开时还会尝试从 iTunes 获取实时数据，音乐推荐、试听、收藏均在浏览器工作。
 
-仓库的 GitHub Actions 每天 01:10 UTC 刷新两份榜单并更新 `docs/`，也可以在 Actions 中手动运行 “Update daily music charts”。GitHub Pages 需使用 `main` 分支的 `/docs` 目录作为来源。
+仓库的 GitHub Actions 每天 01:10 UTC 刷新两份榜单并更新 `docs/`，更新后会主动请求 Pages 重新构建；也可以在 Actions 中手动运行 “Update daily music charts”。GitHub Pages 需使用 `main` 分支的 `/docs` 目录作为来源。
