@@ -19,3 +19,9 @@
 ## 播放栏折射
 
 `glass-optics.js` 根据圆角矩形曲面与折射角生成位移图，中心保持透明，边缘弯曲实际页面内容。`glass-renderer.js` 将不可交互、对辅助技术隐藏的页面视图裁切到播放栏，使用 SVG 三通道位移实现折射与轻微色散；无需浏览器支持 SVG backdrop-filter，也未用高斯模糊代替折射。地图仅在尺寸改变时重建，滚动时更新视图坐标。
+
+## GitHub Pages
+
+静态网站使用 `docs/` 目录。运行 `npm run build:pages` 生成网页与 `docs/api/charts.json`；联网时将从网易云热歌榜和 iTunes 美国榜获取最新数据，单个平台失败时沿用已有、保留时间的快照。网站在访客打开时还会尝试从 iTunes 获取实时数据，音乐推荐、试听、收藏均在浏览器工作。
+
+仓库的 GitHub Actions 每天 01:10 UTC 刷新两份榜单并更新 `docs/`，也可以在 Actions 中手动运行 “Update daily music charts”。GitHub Pages 需使用 `main` 分支的 `/docs` 目录作为来源。
