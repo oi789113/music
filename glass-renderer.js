@@ -1,104 +1,121 @@
-/** A clipped, inert view of the real page, refracted with a shaped optical map.
- * CSS filter works on the mirrored scenery across engines; it does not depend
- * on the Chromium-only SVG backdrop-filter path. No backdrop blur is involved.
+/** Refract only the narrow bevel. The clear pane uses the browser's live backdrop.
+ * Small, clipped tiles keep Safari from rasterising a second, full-height page.
+ * No frame-buffer copies, full-page mirrors or per-frame DOM reconstruction.
  */
 (()=>{
  'use strict';
- const dock=document.getElementById('player');
- const lens=dock?.querySelector('.player-lens');
- const page=document.querySelector('.app-shell');
- const immersive=document.getElementById('immersiveView');
+ const dock=document.getElementById('player'),lens=dock?.querySelector('.player-lens');
  const filter=document.getElementById('player-refraction');
- if(!dock||!lens||!page||!filter)return;
- const padding=36;
- const scene=document.createElement('div');scene.className='glass-scene';
- scene.setAttribute('aria-hidden','true');scene.inert=true;
- const ambient=document.createElement('canvas');ambient.className='glass-scene-ambient';
- const world=document.createElement('div');world.className='glass-scene-world';
- scene.append(ambient,world);lens.append(scene);
- const ambientContext=ambient.getContext('2d',{alpha:false});
- const mapCanvas=document.createElement('canvas');
- const mapContext=mapCanvas.getContext('2d');
- if(!ambientContext||!mapContext)return;
- let frame=0,needsClone=true,geometryKey='',bounds=null,pairs=[],scrollPairs=[],destroyed=false;
- const readBounds=()=>{const r=lens.getBoundingClientRect();return {left:r.left,top:r.top,width:Math.round(r.width),height:Math.round(r.height)};};
- function rebuildMap(){
-  const radius=parseFloat(getComputedStyle(lens).borderTopLeftRadius)||28;
-  const key=[bounds.width,bounds.height,radius].join(':');if(key===geometryKey)return;
-  const width=Math.max(1,bounds.width),height=Math.max(1,bounds.height);
-  const map=createGlassDisplacementMap({width,height,radius,edgeBand:Math.min(19,height*.25),displacement:width<700?19:26,ior:1.5,zoom:1});
+ if(!lens||!filter)return;
+ const padding=16,bevel=12;
+ const rim=document.createElement('div');rim.className='glass-rim';rim.inert=true;rim.setAttribute('aria-hidden','true');
+ const scene=document.createElement('div');scene.className='glass-scene';rim.append(scene);lens.append(rim);
+ const mapCanvas=document.createElement('canvas'),context=mapCanvas.getContext('2d');
+ if(!context)return;
+ const immersive=document.getElementById('immersiveView');
+ let frame=0,geometryKey='',candidates=[],tiles=new Map(),dirty=true,stopped=false,coasting=false,settleTimer=0;
+ const scrollPositions=new WeakMap();
+ const transparency=matchMedia('(prefers-reduced-transparency: reduce), (prefers-contrast: more)');
+ function rebuildMap(bounds){
+  const width=Math.round(bounds.width),height=Math.round(bounds.height);
+  const radius=parseFloat(getComputedStyle(lens).borderTopLeftRadius)||26;
+  const key=[width,height,radius].join(':');if(key===geometryKey)return;
+  const map=createGlassDisplacementMap({width,height,radius,edgeBand:bevel,displacement:7,ior:1.45});
   mapCanvas.width=width+padding*2;mapCanvas.height=height+padding*2;
-  mapContext.fillStyle='rgb(128,128,128)';mapContext.fillRect(0,0,mapCanvas.width,mapCanvas.height);
-  mapContext.putImageData(new ImageData(map.pixels,width,height),padding,padding);
-  const mapImage=document.getElementById('glass-map');
-  mapImage.setAttribute('href',mapCanvas.toDataURL('image/png'));
-  mapImage.setAttribute('width',mapCanvas.width);mapImage.setAttribute('height',mapCanvas.height);
-  filter.setAttribute('width',mapCanvas.width);filter.setAttribute('height',mapCanvas.height);
-  for(const node of filter.querySelectorAll('feFuncR,feFuncG')){node.setAttribute('slope',map.channelSlope);node.setAttribute('intercept',map.channelIntercept);}
-  for(const [id,factor]of [['glass-red',1.035],['glass-green',1],['glass-blue',.965]])document.getElementById(id).setAttribute('scale',map.scale*factor);
-  scene.style.width=mapCanvas.width+'px';scene.style.height=mapCanvas.height+'px';
-  scene.style.left=-padding+'px';scene.style.top=-padding+'px';
-  ambient.width=mapCanvas.width;ambient.height=mapCanvas.height;
-  ambientContext.fillStyle='#100c19';ambientContext.fillRect(0,0,ambient.width,ambient.height);
+  context.fillStyle='rgb(128,128,128)';context.fillRect(0,0,mapCanvas.width,mapCanvas.height);
+  context.putImageData(new ImageData(map.pixels,width,height),padding,padding);
+  // Feather the inside of the bevel so there is no rectangular clear/soft seam.
+  const maskCanvas=document.createElement('canvas');maskCanvas.width=width;maskCanvas.height=height;
+  const maskPixels=new Uint8ClampedArray(width*height*4);
+  for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+   const depth=-roundedRectDistanceNormal(x+.5,y+.5,width,height,radius).distance;
+   const fade=Math.max(0,Math.min(1,(depth-3)/(bevel-3)));
+   const alpha=(1-fade*fade*(3-2*fade))*Math.max(0,Math.min(1,depth+.5));
+   const i=(y*width+x)*4;maskPixels[i]=maskPixels[i+1]=maskPixels[i+2]=255;maskPixels[i+3]=Math.round(alpha*210);
+  }
+  maskCanvas.getContext('2d').putImageData(new ImageData(maskPixels,width,height),0,0);
+  const maskURL='url('+maskCanvas.toDataURL()+')';rim.style.maskImage=maskURL;rim.style.webkitMaskImage=maskURL;
+  const image=document.getElementById('glass-map');image.setAttribute('href',mapCanvas.toDataURL());
+  for(const node of [image,filter]){node.setAttribute('width',mapCanvas.width);node.setAttribute('height',mapCanvas.height);}
+  document.getElementById('glass-displacement').setAttribute('scale',map.scale);
+  scene.style.cssText=`left:${-padding}px;top:${-padding}px;width:${mapCanvas.width}px;height:${mapCanvas.height}px`;
   geometryKey=key;
  }
- function mirror(source){
-  const copy=source.cloneNode(true);
-  const originals=[source,...source.querySelectorAll('*')];
-  const copies=[copy,...copy.querySelectorAll('*')];
-  for(let i=0;i<originals.length;i++){
-   const from=originals[i],to=copies[i];
-   if(from.id){to.dataset.lensId=from.id;to.removeAttribute('id');}
-   to.removeAttribute('autofocus');to.removeAttribute('name');
-   if(to.hasAttribute('tabindex'))to.setAttribute('tabindex','-1');
-   if(from.id&&getComputedStyle(from).display==='none')to.style.setProperty('display','none','important');
-   if(from.scrollWidth>from.clientWidth+1||from.scrollHeight>from.clientHeight+1)scrollPairs.push({from,to});
-   if(from.tagName==='IMG'){to.loading='eager';to.removeAttribute('srcset');}
+ function collect(){
+  // Independent tiles, never the application, a whole chart or fixed/sticky UI.
+  // Each tile is clipped before the SVG filter, bounding the raster surface.
+  const selector=immersive&&!immersive.hidden
+   ? '.immersive-content>img,.immersive-content>div'
+   : '.hero-art,.daily-strip,.section-heading,.chart-toolbar,.song-card,.more-row,.recommend-section,footer';
+  const root=immersive&&!immersive.hidden?immersive:document.querySelector('.app-shell');
+  candidates=[...root.querySelectorAll(selector)].map(source=>({source,clip:source.closest('.song-grid')}));
+  for(const tile of tiles.values())tile.wrapper.remove();tiles.clear();dirty=false;
+ }
+ function makeTile(source){
+  const copy=source.cloneNode(true),wrapper=document.createElement('div');
+  wrapper.className='glass-tile';copy.classList.add('glass-tile-copy');
+  for(const node of [copy,...copy.querySelectorAll('*')]){
+   node.removeAttribute('id');node.removeAttribute('name');node.removeAttribute('autofocus');
+   if(node.matches('button,a,input,[tabindex]'))node.setAttribute('tabindex','-1');
+   if(node.tagName==='IMG'){node.loading='eager';node.decoding='async';}
   }
-  copy.classList.add('glass-scene-copy');
   copy.style.setProperty('position','absolute','important');copy.style.setProperty('margin','0','important');
-  copy.setAttribute('aria-hidden','true');copy.inert=true;
-  world.append(copy);pairs.push({from:source,to:copy});
- }
- function syncScene(){
-  world.replaceChildren();pairs=[];scrollPairs=[];
-  mirror(page);if(immersive&&!immersive.hidden)mirror(immersive);
-  needsClone=false;
- }
- function placeScene(){
-  world.style.width=innerWidth+'px';world.style.height=innerHeight+'px';
-  world.style.transform='translate('+(padding-bounds.left)+'px,'+(padding-bounds.top)+'px)';
-  for(const {from,to}of pairs){const r=from.getBoundingClientRect();to.style.left=r.left+'px';to.style.top=r.top+'px';to.style.width=r.width+'px';}
-  for(const {from,to}of scrollPairs){to.scrollLeft=from.scrollLeft;to.scrollTop=from.scrollTop;}
+  wrapper.append(copy);scene.append(wrapper);return {wrapper,copy};
  }
  function update(){
-  frame=0;if(destroyed||document.hidden)return;
-  try{bounds=readBounds();if(!bounds.width||!bounds.height)return;rebuildMap();if(needsClone)syncScene();placeScene();dock.classList.add('lens-ready');window.dispatchEvent(new Event('sonar:lens-ready'));}
-  catch{dock.classList.remove('lens-ready');}
+  frame=0;if(stopped||document.hidden||transparency.matches||coasting)return;
+  const bounds=lens.getBoundingClientRect();if(!bounds.width||!bounds.height)return;
+  if(dirty)collect();
+  // Batch all layout reads before touching the optical tiles.
+  const visible=[];
+  const area={left:bounds.left-padding,top:bounds.top-padding,right:bounds.right+padding,bottom:bounds.bottom+padding};
+  for(const {source,clip}of candidates){
+   const r=source.getBoundingClientRect();
+   if(!r.width||!r.height||r.bottom<area.top||r.top>area.bottom||r.right<area.left||r.left>area.right)continue;
+   const c=clip?clip.getBoundingClientRect():r;
+   const left=Math.max(r.left,c.left,area.left),top=Math.max(r.top,c.top,area.top);
+   const right=Math.min(r.right,c.right,area.right),bottom=Math.min(r.bottom,c.bottom,area.bottom);
+   if(right>left&&bottom>top)visible.push({source,r,left,top,width:right-left,height:bottom-top});
+  }
+  rebuildMap(bounds);
+  const keep=new Set(visible.map(item=>item.source));
+  for(const [source,tile]of tiles)if(!keep.has(source)){tile.wrapper.remove();tiles.delete(source);}
+  for(const {source,r,left,top,width,height}of visible){
+   let tile=tiles.get(source);if(!tile){tile=makeTile(source);tiles.set(source,tile);}
+   tile.wrapper.style.cssText=`width:${width}px;height:${height}px;transform:translate3d(${left-area.left}px,${top-area.top}px,0)`;
+   tile.copy.style.width=r.width+'px';tile.copy.style.height=r.height+'px';
+   tile.copy.style.left=(r.left-left)+'px';tile.copy.style.top=(r.top-top)+'px';
+  }
+  dock.classList.add('lens-ready');
+  dock.classList.remove('glass-coasting');
  }
- function schedule(rebuild=false){needsClone=needsClone||rebuild;if(!frame&&!document.hidden)frame=requestAnimationFrame(update);}
- // Copy the procedural scene immediately after it draws, before WebGL discards
- // its drawing buffer. Only the dock-sized crop is copied, not a full screenshot.
- window.SonarLens={capture(source){
-  if(!bounds||destroyed||!source.width||!source.height)return;
-  const sx=source.width/innerWidth,sy=source.height/innerHeight;
-  const x=bounds.left-padding,y=bounds.top-padding;
-  ambientContext.fillStyle='#100c19';ambientContext.fillRect(0,0,ambient.width,ambient.height);
-  ambientContext.drawImage(source,x*sx,y*sy,ambient.width*sx,ambient.height*sy,0,0,ambient.width,ambient.height);
- }};
+ function schedule(refresh=false){dirty=dirty||refresh;if(!frame&&!stopped&&!document.hidden)frame=requestAnimationFrame(update);}
  for(const event of ['sonar:render','sonar:track'])window.addEventListener(event,()=>schedule(true));
- document.addEventListener('scroll',event=>{if(!scene.contains(event.target))schedule();},{capture:true,passive:true});
- window.addEventListener('resize',()=>schedule(true),{passive:true});
+ document.addEventListener('scroll',event=>{
+  if(rim.contains(event.target))return;
+  const target=event.target,now=performance.now();
+  const x=target===document?scrollX:target.scrollLeft||0,y=target===document?scrollY:target.scrollTop||0;
+  const previous=scrollPositions.get(target);scrollPositions.set(target,{x,y,time:now});
+  const speed=previous?Math.hypot(x-previous.x,y-previous.y)/Math.max(8,Math.min(48,now-previous.time)):0;
+  // During a fast fling the native pane stays attached to the compositor.
+  // Avoid rerasterising an optical tile for every intermediate scroll position.
+  if(speed>1.25||coasting){
+   coasting=true;dock.classList.add('glass-coasting');clearTimeout(settleTimer);
+   settleTimer=setTimeout(()=>{coasting=false;schedule();},100);
+  }else schedule();
+ },{capture:true,passive:true});
+ // Safari's collapsing toolbar changes the visual viewport without a document
+ // scroll. Reposition the small bevel, never animate the dock's bottom/height.
+ window.visualViewport?.addEventListener('resize',()=>schedule(),{passive:true});
+ window.visualViewport?.addEventListener('scroll',()=>schedule(),{passive:true});
+ window.addEventListener('resize',()=>schedule(),{passive:true});
  document.fonts?.ready.then(()=>schedule(true));
- // Visibility and responsive layout changes update both geometry and backdrop.
- const resize=typeof ResizeObserver==='function'?new ResizeObserver(()=>schedule(true)):null;
- resize?.observe(dock);resize?.observe(page);
- const pageObserver=typeof MutationObserver==='function'?new MutationObserver(()=>schedule(true)):null;
- pageObserver?.observe(page,{attributes:true,subtree:true,attributeFilter:['class','hidden']});
- const immersiveObserver=typeof MutationObserver==='function'?new MutationObserver(()=>schedule(true)):null;
- if(immersive)immersiveObserver?.observe(immersive,{attributes:true,attributeFilter:['hidden']});
+ const observer=new ResizeObserver(()=>schedule());observer.observe(dock);
+ const modalObserver=new MutationObserver(()=>schedule(true));
+ if(immersive)modalObserver.observe(immersive,{attributes:true,attributeFilter:['hidden']});
+ transparency.addEventListener('change',()=>schedule(true));
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule(true);});
- window.addEventListener('pagehide',()=>{if(frame)cancelAnimationFrame(frame);frame=0;destroyed=true;});
- window.addEventListener('pageshow',()=>{destroyed=false;schedule(true);});
+ window.addEventListener('pagehide',()=>{stopped=true;clearTimeout(settleTimer);cancelAnimationFrame(frame);frame=0;});
+ window.addEventListener('pageshow',()=>{stopped=false;coasting=false;schedule(true);});
  schedule(true);
 })();

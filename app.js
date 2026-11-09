@@ -10,7 +10,9 @@ let favorites=load('sonar-favorites',[]),tastes=load('sonar-tastes',[]),mix=[],q
 if(!Array.isArray(favorites))favorites=[];if(!Array.isArray(tastes))tastes=[];
 const audio=$('#audio');audio.volume=.7;
 let toastTimer,modalRestore,featureIndex=0,deckHover=false,expanded=false;
-const reducedMotion=matchMedia('(prefers-reduced-motion:reduce)').matches;
+const motionPreference=matchMedia('(prefers-reduced-motion:reduce)');
+let reducedMotion=motionPreference.matches;
+motionPreference.addEventListener?.('change',event=>{reducedMotion=event.matches;});
 function toast(message){$('#toast').textContent=message;$('#toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),3700);}
 function openModal(content,eyebrow='SONAR NOTES'){modalRestore=document.activeElement;$('#modalContent').innerHTML=content;$('#modalEyebrow').textContent=eyebrow;if(!$('#modal').open)$('#modal').showModal();}
 function closeModal(){$('#modal').close();modalRestore?.focus();}
@@ -45,7 +47,7 @@ function heroTrack(t,animate=false,direction=1){
  $('#deckCounter').innerHTML=found<0?'NOW <i>/ PLAYING</i>':String(featureIndex+1).padStart(2,'0')+' <i>/ '+String(features.length).padStart(2,'0')+'</i>';
  $('#deckProgress').style.width=((featureIndex+1)/features.length*100)+'%';
  $('#featureLike').classList.toggle('liked',isLiked(t.id));$('#featureLike').setAttribute('aria-pressed',isLiked(t.id));
- if(animate&&!reducedMotion&&$('#heroPlay').animate){$('#heroPlay').getAnimations().forEach(a=>a.cancel());$('#heroPlay').animate([{opacity:.1,filter:'blur(14px)',transform:'translateX('+(direction*45)+'px) rotate('+(direction*8)+'deg) scale(.9)'},{opacity:1,filter:'blur(0)',transform:'rotate(-6deg) scale(1)'}],{duration:650,easing:'cubic-bezier(.16,1,.3,1)'});$('.deck-meta').animate([{opacity:0,filter:'blur(5px)',transform:'translateY(7px)'},{opacity:1,filter:'blur(0)',transform:'translateY(0)'}],{duration:550,easing:'cubic-bezier(.16,1,.3,1)'});}
+ if(animate&&!reducedMotion&&$('#heroPlay').animate){$('#heroPlay').getAnimations().forEach(a=>a.cancel());$('#heroPlay').animate([{opacity:.65,filter:'blur(2px)',transform:'translateX('+(direction*18)+'px) rotate('+(direction*3)+'deg) scale(.98)'},{opacity:1,filter:'blur(0)',transform:'rotate(-6deg) scale(1)'}],{duration:480,easing:'cubic-bezier(.16,1,.3,1)'});$('.deck-meta').animate([{opacity:.5,filter:'blur(0)',transform:'translateY(7px)'},{opacity:1,filter:'blur(0)',transform:'translateY(0)'}],{duration:380,easing:'cubic-bezier(.16,1,.3,1)'});}
  window.dispatchEvent(new CustomEvent('sonar:track',{detail:{track:t}}));
 }
 function shiftFeature(direction){const list=featureTracks();featureIndex=(featureIndex+direction+list.length)%list.length;heroTrack(list[featureIndex],true,direction);}
@@ -93,7 +95,7 @@ $('#heroPlay').addEventListener('pointerdown',e=>{if(e.button!==0)return;dragSta
 window.addEventListener('pointerup',e=>{if(!dragStart||dragStart.id!==e.pointerId)return;const dx=e.clientX-dragStart.x,dy=e.clientY-dragStart.y;dragStart=null;if(Math.abs(dx)>45&&Math.abs(dx)>Math.abs(dy)){suppressHeroClick=true;shiftFeature(dx>0?-1:1);setTimeout(()=>suppressHeroClick=false,100);}});
 window.addEventListener('pointercancel',()=>dragStart=null);
 $('#heroPlay').addEventListener('click',e=>{if(suppressHeroClick){e.stopImmediatePropagation();e.preventDefault();}},true);
-if(!reducedMotion)setInterval(()=>{if(!document.hidden&&!deckHover&&audio.paused&&page==='discover'&&!$('#modal').open&&$('#immersiveView').hidden)shiftFeature(1);},8500);
+if(!reducedMotion)setInterval(()=>{if(!reducedMotion&&!document.hidden&&!deckHover&&audio.paused&&page==='discover'&&$('#heroArt').getBoundingClientRect().bottom>0&&$('#heroArt').getBoundingClientRect().top<innerHeight&&!$('#modal').open&&$('#immersiveView').hidden)shiftFeature(1);},8500);
 $('#songsNext').onclick=()=>$('#songGrid').scrollBy({left:$('#songGrid').clientWidth*.78,behavior:reducedMotion?'auto':'smooth'});
 $('#songsPrev').onclick=()=>$('#songGrid').scrollBy({left:-$('#songGrid').clientWidth*.78,behavior:reducedMotion?'auto':'smooth'});
 function syncImmersive(){const t=current||data.tracks.find(t=>t.preview)||data.tracks[0];$('#immersiveCover').src=safeURL(t.cover);$('#immersiveBg').src=safeURL(t.cover);$('#immersiveTitle').textContent=t.title;$('#immersiveArtist').textContent=t.artist;}
